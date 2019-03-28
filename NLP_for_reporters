@@ -1,0 +1,362 @@
+'''
+GOAL:
+Turn a foreign language (here, Hebrew) pdf into a readable English text, then find entities and their relations
+This of course is not enough to reach conclusions, but more to be able to ask the right questions!
+
+Resources:
+
+OCR tutorial:
+https://pythontips.com/2016/02/25/ocr-on-pdf-files-using-python/
+
+For translating the output, i've used an implementation of google translate.
+usage example in the docs, here:
+https://py-googletrans.readthedocs.io/en/latest/
+
+NER with nltk vs Spacy:
+https://towardsdatascience.com/named-entity-recognition-with-nltk-and-spacy-8c4a7d88e7da
+
+Spacy usage examples:
+https://spacy.io/usage/examples
+(with a very detailed example for NER relation extraction)
+
+Parse tree generator to explore dependencies:
+http://www.link.cs.cmu.edu/link/submit-sentence-4.html
+
+'''
+
+#  First, I installed some libraries I needed for this.
+# install tesesract (couldn't do it with pip so used homebrew)
+#  ---> sudo apt-get install tesseract-ocr (need homebrew for that in osx)
+#  ---> install pyOCR, wand, PIL using pip3 install
+
+
+#############################################################
+#                                                           #
+#                  pdf to text using OCR                    #
+#                                                           #
+#############################################################
+
+from wand.image import Image
+from PIL import Image as PI
+import pyocr
+import pyocr.builders
+import io
+
+
+tool = pyocr.get_available_tools()[0]
+lang = tool.get_available_languages()[46]   # **
+#
+#  ** the example used english. to find hebrew, i did this:
+# print lang      #quick check of what the list looks like, found hebrew as 'heb'
+#
+# for x in lang:
+#     print x, lang.index(x) # find the index for hebrew, which is 46
+
+req_image = []
+final_text = []
+
+# open pdf and covert to jpeg
+
+image_pdf = Image(filename="/Users/noyakohavi/Desktop/bibi_2.pdf", resolution=300)
+image_jpeg = image_pdf.convert('jpeg')
+
+# had to install imagemagick and ghostscript to make this work:
+# brew install freetype imagemagick
+# brew install ghostscript
+
+# converting all the pdf into images adn collecting them together
+for img in image_jpeg.sequence:
+    img_page = Image(image=img)
+    req_image.append(img_page.make_blob('jpeg'))
+
+# running OCR in the chosen language on the images:
+for img in req_image:
+    txt = tool.image_to_string(
+        PI.open(io.BytesIO(img)),
+        lang=lang,
+        builder=pyocr.builders.TextBuilder()
+    )
+    final_text.append(txt)      # this is a list where each elemet represents one page in the input,
+                                #   -- > useful for navigation
+
+
+# final_text looked like this : (this is an encoded utf-8)
+# [u'\u05d1\u05dc\u05dc\u05d9\n\n \n\n8 \u05dc\u05e4\u05d1\u05e8\u05d5\u05d0\u05e8, 2019\n\u05db\u05d9\'\u05d2 [....]
+# what to do? maybe we don't need to so anything and can just translate this?
+
+# now we can attempt to translate
+# READ THE DOCS for googletrans!
+
+
+#############################################################
+#                                                           #
+#              translating the text to english              #
+#                                                           #
+#############################################################
+
+
+from googletrans import Translator
+translator = Translator()
+
+all_translated = []
+
+translations = translator.translate(final_text)
+for translation in translations:
+    # print(translation.origin, ' -> ', translation.text) # see how the sausage is made
+    all_translated.append(translation.text)
+
+
+len(all_translated)     # just checking I still have 57 elements here
+
+all_in_one = str(' '.join(all_translated).encode('utf-8') )  # colleceted all elements into one element,
+                                                        # needed to do the encoding to save to file
+
+# write translated text to file to go over it easily and have a more shareable record'''
+
+output_file = '/Users/noyakohavi/Desktop/bibi_2_test.txt'
+
+with open(output_file, 'w') as f:
+    f.write(all_in_one)
+
+
+#############################################################
+#                                                           #
+#      extracting named entities and their types (NER)      #
+#                                                           #
+#############################################################
+
+
+import spacy
+from spacy import displacy
+from collections import Counter
+
+import en_core_web_sm # -m spacy download  en_core_web_sm
+
+nlp = en_core_web_sm.load()
+
+# # example: result : [('European', 'NORP'), ('Google', 'ORG'), ('$5.1 billion', 'MONEY'), ('Wednesday', 'DATE')]
+# doc = nlp('European authorities fined Google a record $5.1 billion on Wednesday for abusing its power in the mobile phone market and ordered the company to alter its practices')
+# analyzed = ([(X.text, X.label_) for X in doc.ents])
+
+input_file = open('/Users/noyakohavi/Desktop/bibi_2_test.txt', 'r')
+
+to_ner = []
+for line in input_file:
+    to_ner.append(line)
+
+all_to_ner = nlp(' '.join(to_ner))
+analyzed = ([(X.text, X.label_) for X in all_to_ner.ents])
+
+# some metadata on the NER:
+# how many of each label we have
+labels = [x.label_ for x in all_to_ner.ents]
+Counter(labels)
+
+# see how many we have of each entity
+entities = [x.text for x in all_to_ner.ents]
+entities_with_counts = Counter(entities)
+
+orgs = []
+for x in analyzed:
+    if x[1] == 'ORG':
+        orgs.append(x[0])
+
+uniq_orgs = sorted(set(orgs))
+
+
+people = []
+Counter(people)
+
+for x in analyzed:
+    if x[1] == 'PERSON':
+        people.append(x[0])
+
+# take a look at the peple we see here (use unique set sorted alphabetically for readability)
+uniq_ppl = sorted(set(people))
+
+
+#############################################################
+#                                                           #
+#         ~~~~~~~~~~   fuzzy matches   ~~~~~~~~~~           #
+#                                                           #
+#############################################################
+
+
+# we can see this is not perfect and that many of these names are very similar and should be counted as the same ....
+# fuzzy search for names because OCR and google translate are not close to perfect...
+
+from fuzzywuzzy import fuzz
+
+people_groups = []
+for x in uniq_ppl:
+    x_list = [x]
+    for y in uniq_ppl:
+        if y not in x_list and fuzz.ratio(x, y) > 90:       # play with this threshold, skewing for very similar here
+            x_list.append(y)
+
+    people_groups.append(x_list)
+
+for g in people_groups:
+    print(g)
+
+# expectaion: 1 = x,c,v,z ; 2 = g
+
+#
+# # merging those groups together if they share a common element
+# people_groups = [['x', 'c', 'v'], ['c', 'v'], ['x', 'z'], ['g']]
+#
+#
+# flatten = lambda l: [item for sublist in l for item in sublist]
+#
+# new_ppl_gr = []
+# for x in people_groups:
+#     rest = [i for i in people_groups if i!=x]
+#     # print(x, rest)
+#     for z in rest:
+#         print('x', x, 'z', z,'rest', rest)
+#         if len(set(z+x)) < len(z+x):
+#             rest = [i for i in rest if i !=z]
+#             print('toadd',x,z)
+#             x.append(z)
+#             x = flatten(x)
+#             print('newx',x)
+#
+#
+
+
+
+#############################################################
+#                                                           #
+#               connecting people to orgs                   #
+#                                                           #
+#############################################################
+
+ex1 = nlp('Ruth Bader Ginsburg ruled on this case at the Supreme Court')
+ex2 = nlp('The CEO of Microsoft is Bill Gates')
+ex3 = nlp('Noya Kohavi is suspected of being a member of the Columbiazz Cartel or the JzzSchool church')
+
+ex1_ner = ([(X.text, X.label_) for X in ex1.ents]) #works nice
+ex2_ner = ([(X.text, X.label_) for X in ex2.ents]) #works nice
+ex3_ner = ([(X.text, X.label_) for X in ex3.ents]) # example with some made up entities, also nice
+
+
+ex4_raw = ('Ruth Bader Ginsburg ruled on this case at the Supreme Court. '
+           'The CEO of Microsoft is Bill Gates. '
+           'Noya Kohavi is suspected of being a member of the Columbiaz Cartel or the J School church. '
+           'Kohavi is also a member of the Brown Center. '
+           'She is also accused at being a member of Crimezz.')
+
+ex4 = nlp(ex4_raw)
+
+ex4_ner = ([(X.text, X.label_) for X in ex4.ents])
+
+# like we did before, look at the all the tags and make sure you're using all the extracted data.
+# for the sake of bravity we only have people and orgs in this example.
+
+ppl = []
+orgs = []
+other = []
+
+
+for x in ex4_ner:
+    if x[1] == 'ORG':
+        orgs.append(x[0])
+    if x[1] == 'PERSON':
+        ppl.append(x[0])
+    if x[1] != 'ORG' and x[1] != 'PERSON':
+        other.append(x[0])
+
+# let's explore our data and do some human reading to correct automated NER that is wrong for our case.
+# Note: you can edit your instance of the spacy NER if you want! it's good for documentation!
+
+# Notice in the last sentence 'kohavi' was identified as ORG in the NER instead of person.
+# this is another usage for fuzzy search!
+
+for x in ppl:
+    for y in orgs:
+        if fuzz.ratio(x, y) > 50:   # low threshold for recall, we're going over this so we know precision is high
+            print('ppl:',x,'orgs:',y)
+
+# also have 'Crimezz', an org that was categorized as 'other'. let's add that to our org list.
+
+# update our lists.
+ppl.append('Kohavi')
+orgs = [x for x in orgs if x != 'Kohavi']
+orgs.append('Crimezz')
+
+# can we define very specifically what types of relationships we're looking for between people and organizations?
+# if so, do these relationships translate to grammatical structures? for instnac
+
+rels =[]
+for x in ex4_raw.split('. '):    # divide raw text into sentences (very naively). you can go back to the original OCR data to do this more accurately
+    for p in ppl:
+        for o in orgs:
+            if p in x and o in x:
+                rel = {'person': p, 'org': o}
+                # print(rel)
+                rels.append(rel)
+
+# lets inspect our results:
+for rel in rels:
+    print(rel)
+
+# we can see that we're missing one of our orgs, Crimezz.
+# this is because our person was not named in this sentence. when we speak, we don't tend to repeat entity names constantly.
+# instead we use pronouns - like 'he', 'she', 'they'. this grammatical phenomena is called anaphora.
+# it might be good to add another list of generic pronouns to our ppl list to catch those too, though they will require human reading.
+
+pronouns = ['He', 'She', 'It ', 'They ']  # not an exhaustive list
+ppl = ppl + pronouns
+
+
+rels_w_pronouns =[]
+
+for x in ex4_raw.split('. '):    # divide raw text into sentences (very naively). you can go back to the original OCR data to do this more accurately
+    for p in ppl:
+        for o in orgs:
+            if p in x and o in x:
+                rel = {'person': p, 'org': o}
+                # print(rel)
+                rels_w_pronouns.append(rel)
+
+for rel in rels_w_pronouns:
+    print(rel)
+
+
+#############################################################
+#                                                           #
+#               exploring dependency parsing                #
+#                                                           #
+#############################################################
+
+# Part of speech tagging : the process of identifying which POS each word is.
+#                          It depends on the context - in English, for instance, nouns and verbs can have the same form.
+#                          Example: "The paint is drying" (paint = Noun),
+#                                   "I paint walls" (paint = verb).
+# Dependency parsing : the process of describing the relationships between the phrases in the sentence.
+#                          Example: "The paint is drying" (the paint = subj; is drying = verb/root,
+#                                   "I paint walls" (I = subj; paint = verb/root; walls = obj).
+
+# In the most general terms:
+# the root of a syntactic tree is the main VERB.
+# the SUBJECT is who did the action.
+# the OBJECT is who the action was done to.
+
+ex6 = nlp('John is accused by Mary. Mary is charging John with murder.')
+
+ex6_sents = list(ex6.sents)         # this function takes the document and splits it into sentences spacy can use
+
+for x in ex6_sents:
+    root_token = x.root   # this is the main verb in the sentence
+    print(x, 'root', root_token)
+    for child in root_token.children:
+        if child.dep_ == 'nsubj':
+            subj = child
+            print(x, 'subj', subj)
+        if child.dep_ == 'dobj':
+            obj = child
+            print(x, 'obj', obj)
+
+
+# so now we can look for explore sentence where someone specific did something to someone else!
+
