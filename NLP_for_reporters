@@ -199,31 +199,6 @@ for x in uniq_ppl:
 for g in people_groups:
     print(g)
 
-# expectaion: 1 = x,c,v,z ; 2 = g
-
-#
-# # merging those groups together if they share a common element
-# people_groups = [['x', 'c', 'v'], ['c', 'v'], ['x', 'z'], ['g']]
-#
-#
-# flatten = lambda l: [item for sublist in l for item in sublist]
-#
-# new_ppl_gr = []
-# for x in people_groups:
-#     rest = [i for i in people_groups if i!=x]
-#     # print(x, rest)
-#     for z in rest:
-#         print('x', x, 'z', z,'rest', rest)
-#         if len(set(z+x)) < len(z+x):
-#             rest = [i for i in rest if i !=z]
-#             print('toadd',x,z)
-#             x.append(z)
-#             x = flatten(x)
-#             print('newx',x)
-#
-#
-
-
 
 #############################################################
 #                                                           #
